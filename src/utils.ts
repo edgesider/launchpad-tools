@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { LaunchpadDB } from './main';
+import { LaunchpadDB } from './db';
 
 export function assert(cond: Boolean, log: string) {
   if (!cond) {

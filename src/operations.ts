@@ -1,5 +1,5 @@
 import pinyin from 'pinyin';
-import { App, Group, Item, RootGroup, walkGroup } from './main';
+import { App, Group, Item, RootGroup, walkGroup } from './db';
 import { deepClone, groupBy } from './utils';
 
 const MAX_PER_PAGE = 5 * 7;
