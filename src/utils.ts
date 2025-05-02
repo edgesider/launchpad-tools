@@ -1,5 +1,7 @@
+import child_process from 'node:child_process';
+import fs from 'node:fs';
 import sharp from 'sharp';
-import { LaunchpadDB } from './db';
+import { getDBPath, LaunchpadDB } from './db';
 
 export function assert(cond: Boolean, log: string) {
   if (!cond) {
@@ -206,4 +208,15 @@ export async function writeIconsHtml(db: LaunchpadDB) {
       </body>
       </html>
   `;
+}
+
+export function restartLaunchpad() {
+  child_process.spawnSync('killall', ['Dock']);
+}
+
+export async function resetLaunchpad() {
+  fs.unlinkSync(getDBPath());
+  restartLaunchpad();
+  await sleep(500);
+  restartLaunchpad();
 }

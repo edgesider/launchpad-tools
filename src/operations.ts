@@ -2,8 +2,6 @@ import pinyin from 'pinyin';
 import { App, Group, Item, RootGroup, walkGroup } from './db';
 import { deepClone, groupBy } from './utils';
 
-const MAX_PER_PAGE = 5 * 7;
-
 export class Operations {
   private constructor(public root: RootGroup) {
   }
@@ -62,35 +60,46 @@ export class Operations {
     return Operations.from(root, false);
   }
 
-  groupBy(grouper: (app: App) => string): Operations {
+  groupedBy(grouper: (app: App) => string, groupType: 'page' | 'folder' = 'page'): Operations {
     const apps = this.getApps();
     const colorGrouped = groupBy(apps.map(app => [app, grouper(app)] as const), '1');
     const groups: Group[] = [];
     for (const [group, apps_] of Object.entries(colorGrouped)) {
       const apps = apps_.map(a => a[0]);
-      groups.push({
-        id: 0,
-        kind: 'group',
-        name: group,
-        isPlaceholder: true,
-        children: [{
-          kind: 'group',
+      if (groupType === 'folder') {
+        groups.push({
           id: 0,
-          name: null,
-          children: apps
-        }]
-      });
+          kind: 'group',
+          name: group,
+          isPlaceholder: true,
+          children: [{
+            kind: 'group',
+            id: 0,
+            name: null,
+            children: apps
+          }]
+        });
+      } else if (groupType === 'page') {
+        groups.push({
+          id: 0,
+          kind: 'group',
+          name: group,
+          children: apps,
+        });
+      }
     }
     return Operations.from({
       id: 1,
       kind: 'group',
       name: null,
-      children: [{
-        id: 0,
-        kind: 'group',
-        name: null,
-        children: groups
-      }]
+      children: groupType === 'folder'
+        ? [{
+          id: 0,
+          kind: 'group',
+          name: null,
+          children: groups
+        }]
+        : groups
     });
   }
 }

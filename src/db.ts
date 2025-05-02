@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync, StatementSync } from 'node:sqlite';
-import { associateWith } from './utils';
+import { associateWith, classifyHSL, ColorClass, getDominantColor, rgbToHSL } from './utils';
 
 export enum ItemType {
   Placeholder = 2,
@@ -141,6 +141,7 @@ export function getRoot(db?: LaunchpadDB): RootGroup {
       kind: 'group',
       id: item.rowid,
       name: g.title,
+      isPlaceholder: item.type === ItemType.Placeholder,
       children,
     };
   };
@@ -266,4 +267,32 @@ export function applyRoot(root: RootGroup) {
       imageCache.item_id, imageCache.size_big, imageCache.size_mini,
       imageCache.image_data, imageCache.image_data_mini);
   }
+}
+
+/**
+ * 构建从item_id到图标主色调的映射
+ */
+export async function buildDominantColorClassMap(db: LaunchpadDB): Promise<Record<number, ColorClass>> {
+  const colorClassMap: Record<number, ColorClass> = {};
+  for (const image of db.imageCaches) {
+    const miniImage = db.imageCacheMap[image.item_id].image_data_mini.buffer;
+    const rgb = await getDominantColor(miniImage as ArrayBuffer);
+    const hsl = rgbToHSL(rgb);
+    colorClassMap[image.item_id] = classifyHSL(hsl);
+  }
+  return colorClassMap;
+}
+
+
+export function findItemByName(root: RootGroup, kind: 'app', expectedName: string | RegExp): App[];
+export function findItemByName(root: RootGroup, kind: 'group', expectedName: string | RegExp): Group[];
+export function findItemByName(root: RootGroup, kind: Item['kind'], expectedName: string | RegExp): Item[] {
+  const items: Item[] = [];
+  expectedName = expectedName instanceof RegExp ? expectedName : new RegExp(expectedName);
+  walkGroup(root, item => {
+    if (item.kind === kind && item.name && expectedName.test(item.name)) {
+      items.push(item);
+    }
+  });
+  return items;
 }
