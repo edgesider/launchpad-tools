@@ -5,11 +5,11 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { Operations } from './operations';
-import { associateWith, classifyHSL, getDominantColor, rgbToHSL, sleep } from './utils';
+import { associateWith, classifyHSL, ColorClass, getColorClassName, getDominantColor, rgbToHSL, sleep } from './utils';
 
 export enum ItemType {
-  Group = 2,
-  Page = 3,
+  Placeholder = 2,
+  Group = 3,
   App = 4,
 }
 
@@ -58,6 +58,7 @@ export interface Group {
   id: number;
   name: string | null;
   children: Item[];
+  isPlaceholder?: boolean;
 }
 
 export interface RootGroup extends Group {
@@ -70,7 +71,7 @@ export interface LaunchpadDB {
   apps: RawApp[];
   items: RawItem[];
   groups: RawGroup[];
-  imageCache: RawImageCache[];
+  imageCaches: RawImageCache[];
   appMap: Record<string, RawApp>;
   itemMap: Record<string, RawItem>;
   groupMap: Record<string, RawGroup>;
@@ -105,7 +106,7 @@ function getDB(): LaunchpadDB {
     lastSystemItemId,
     apps, items, groups,
     appMap, itemMap, groupMap,
-    imageCache, imageCacheMap
+    imageCaches: imageCache, imageCacheMap
   };
 }
 
@@ -124,7 +125,7 @@ export function getRoot(db?: LaunchpadDB): RootGroup {
         if (item.rowid <= lastSystemItemId) {
           return null;
         }
-        if (item.type === ItemType.Group || item.type === ItemType.Page) {
+        if (item.type === ItemType.Group || item.type === ItemType.Placeholder) {
           // group
           return itemToGroup(item);
         } else if (item.type === ItemType.App) {
@@ -153,21 +154,25 @@ export function getRoot(db?: LaunchpadDB): RootGroup {
 /**
  * 使用{@link walker}遍历{@link group}
  */
-export function walkGroup(group: Group, walker: (item: Item, parent: Group, index: number) => Item | void) {
+export function walkGroup(
+  group: Group,
+  walker: (item: Item, parent: Group, index: number, depth: number) => Item | void,
+  depth = 0
+) {
   for (let i = 0; i < group.children.length; i++) {
     const item = group.children[i];
-    const newItem = walker(item, group, i);
+    const newItem = walker(item, group, i, depth);
     if (newItem) {
       group.children[i] = newItem;
     }
     if (item.kind === 'group') {
-      walkGroup(item, walker);
+      walkGroup(item, walker, depth + 1);
     }
   }
 }
 
 export function applyRoot(root: RootGroup) {
-  const { groupMap, itemMap, items: oldItems, apps, lastSystemItemId } = getDB();
+  const { groupMap, itemMap, items: oldItems, apps, imageCaches, lastSystemItemId } = getDB();
 
   // 创建新项目时的下一个id
   let nextId = Math.max(...oldItems.map(item => item.rowid)) + 1;
@@ -199,9 +204,11 @@ export function applyRoot(root: RootGroup) {
       item.id = item.id === 0 ? nextId++ : item.id;
       updateItems.push({
         rowid: item.id,
-        uuid: randomUUID(),
+        uuid: randomUUID().toUpperCase(),
         flags: 0,
-        type: parent.id === 1 ? ItemType.Page : ItemType.Group,
+        type: item.kind === 'group'
+          ? (item.isPlaceholder ? ItemType.Placeholder : ItemType.Group)
+          : ItemType.App,
         parent_id: parent.id,
         ordering
       });
@@ -253,6 +260,15 @@ export function applyRoot(root: RootGroup) {
   for (const app of apps) {
     sql.run(app.item_id, app.title, app.bundleid, app.storeid, app.category_id, app.moddate, app.bookmark);
   }
+
+  db.prepare('delete from image_cache').run();
+  sql = db.prepare(`insert into image_cache (item_id, size_big, size_mini, image_data, image_data_mini)
+                    values (?, ?, ?, ?, ?)`);
+  for (const imageCache of imageCaches) {
+    sql.run(
+      imageCache.item_id, imageCache.size_big, imageCache.size_mini,
+      imageCache.image_data, imageCache.image_data_mini);
+  }
 }
 
 function restartLaunchpad() {
@@ -266,115 +282,25 @@ async function resetLaunchpad() {
   restartLaunchpad();
 }
 
-function sortByColor(imageCacheMap: Record<string, RawImageCache>, a: Item, b: Item): number {
-  if (a.kind !== 'app' || b.kind !== 'app') {
-    return 0;
-  }
-  return 0;
-}
-
 async function main() {
   const db = getDB();
   const root = getRoot(db);
 
-  let s = '';
-  const groups: Record<
-    string,
-    {
-      name: string;
-      hsl: [number, number, number];
-      image: ArrayBuffer
-    }[]
-  > = {};
-  for (const app of db.apps) {
-    const miniImage = db.imageCacheMap[app.item_id].image_data_mini.buffer;
-    const image = db.imageCacheMap[app.item_id].image_data_mini.buffer as ArrayBuffer;
+  const colorClassMap: Record<number, ColorClass> = {};
+  for (const image of db.imageCaches) {
+    const miniImage = db.imageCacheMap[image.item_id].image_data_mini.buffer;
     const rgb = await getDominantColor(miniImage as ArrayBuffer);
     const hsl = rgbToHSL(rgb);
-    const class_ = classifyHSL(hsl);
-    const result = {
-      name: app.title,
-      hsl,
-      image
-    };
-    if (groups[class_]) {
-      groups[class_].push(result);
-    } else {
-      groups[class_] = [result];
-    }
+    colorClassMap[image.item_id] = classifyHSL(hsl);
   }
-  for (const [class_, group] of Object.entries(groups)) {
-    // language=html
-    s += `
-        <div class="list"><p>${class_}</p>`;
-    for (const { image, name, hsl } of group) {
-      // language=html
-      s += `
-          <div class="item">
-              <img class="image" src="data:image/png;base64,${Buffer.from(image).toString('base64')}"
-                   alt="${name}"/>
-              <div class="block" style="background: hsl(${hsl[0]} ${hsl[1]} ${hsl[2]})"></div>
-          </div>
-      `;
-    }
-    s += '</div>';
-  }
-  // language=html
-  console.log(`
-      <meta charset="utf-8">
-      <html lang="zh">
-      <head>
-          <style>
-              .list {
-                  display: flex;
-                  flex-direction: row;
-                  flex-wrap: wrap;
-                  justify-content: flex-start;
-                  align-items: flex-start;
-                  gap: 16px;
-                  margin-top: 30px;
-              }
 
-              .item {
-                  display: flex;
-                  flex-direction: row;
-                  justify-content: flex-start;
-                  align-items: center;
-                  gap: 8px;
-              }
-
-              .image {
-                  width: 50px;
-                  height: 50px;
-              }
-
-              .block {
-                  width: 50px;
-                  height: 50px;
-              }
-          </style>
-      </head>
-      <body>
-      ${s}
-      </body>
-      </html>
-  `);
-
-  // const newRoot = Operations.from(root)
-  //   .flatted()
-  //   .sorted()
-  //   .root;
-  // applyRoot(newRoot);
-  // console.log(JSON.stringify(newRoot, function (k, v) {
-  //   if (
-  //     Array.isArray(this) ||
-  //     ['', 'name', 'children'].indexOf(k) >= 0
-  //   ) {
-  //     return v;
-  //   }
-  //   return undefined;
-  // }, 2));
-  // restartLaunchpad();
+  const newRoot = Operations.from(root)
+    .groupBy(app => getColorClassName(colorClassMap[app.id]))
+    // .sorted()
+    // .flatted()
+    .root;
+  applyRoot(newRoot);
+  restartLaunchpad();
 }
 
 if (require.main === module) {

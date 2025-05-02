@@ -1,6 +1,6 @@
 import pinyin from 'pinyin';
-import { App, Item, RootGroup, walkGroup } from './main';
-import { deepClone } from './utils';
+import { App, Group, Item, RootGroup, walkGroup } from './main';
+import { deepClone, groupBy } from './utils';
 
 const MAX_PER_PAGE = 5 * 7;
 
@@ -12,18 +12,22 @@ export class Operations {
     return new Operations(clone ? deepClone(root) : root);
   }
 
-  /**
-   * 将所有的图标平铺
-   *
-   * Note. 所有的Page也会被合并
-   */
-  flatted(): Operations {
+  private getApps(): App[] {
     const apps: App[] = [];
     walkGroup(this.root, (item) => {
       if (item.kind === 'app') {
         apps.push(item);
       }
     });
+    return apps;
+  }
+
+  /**
+   * 将所有的图标平铺
+   *
+   * Note. 所有的Page也会被合并
+   */
+  flatted(): Operations {
     return Operations.from({
       id: 1,
       kind: 'group',
@@ -32,7 +36,7 @@ export class Operations {
         kind: 'group',
         id: 0,
         name: null,
-        children: apps
+        children: this.getApps()
       }]
     });
   }
@@ -56,5 +60,37 @@ export class Operations {
       }
     });
     return Operations.from(root, false);
+  }
+
+  groupBy(grouper: (app: App) => string): Operations {
+    const apps = this.getApps();
+    const colorGrouped = groupBy(apps.map(app => [app, grouper(app)] as const), '1');
+    const groups: Group[] = [];
+    for (const [group, apps_] of Object.entries(colorGrouped)) {
+      const apps = apps_.map(a => a[0]);
+      groups.push({
+        id: 0,
+        kind: 'group',
+        name: group,
+        isPlaceholder: true,
+        children: [{
+          kind: 'group',
+          id: 0,
+          name: null,
+          children: apps
+        }]
+      });
+    }
+    return Operations.from({
+      id: 1,
+      kind: 'group',
+      name: null,
+      children: [{
+        id: 0,
+        kind: 'group',
+        name: null,
+        children: groups
+      }]
+    });
   }
 }
