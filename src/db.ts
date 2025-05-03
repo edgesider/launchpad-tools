@@ -2,7 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync, StatementSync } from 'node:sqlite';
-import { associateWith, classifyHSL, ColorClass, getDominantColor, rgbToHSL } from './utils';
+import { collectApps } from './operations';
+import { assert, associateWith, classifyHSL, ColorClass, getDominantColor, rgbToHSL } from './utils';
 
 export enum ItemType {
   Placeholder = 2,
@@ -43,6 +44,7 @@ export interface RawImageCache {
   image_data_mini: NodeJS.ArrayBufferView;
 }
 
+// TODO 结构具体到App/Folder/Page/Root
 export interface App {
   kind: 'app';
   id: number;
@@ -65,6 +67,7 @@ export interface RootGroup extends Group {
 export type Item = App | Group;
 
 export interface LaunchpadDB {
+  db: DatabaseSync;
   apps: RawApp[];
   items: RawItem[];
   groups: RawGroup[];
@@ -100,6 +103,7 @@ export function getDB(): LaunchpadDB {
   const itemMap = associateWith(items, 'rowid');
   const imageCacheMap = associateWith(imageCache, 'item_id');
   return {
+    db,
     lastSystemItemId,
     apps, items, groups,
     appMap, itemMap, groupMap,
@@ -154,23 +158,29 @@ export function getRoot(db?: LaunchpadDB): RootGroup {
  */
 export function walkGroup(
   group: Group,
-  walker: (item: Item, parent: Group, index: number, depth: number) => Item | void,
-  depth = 0
+  walker: (item: Item, parents: Group[], index: number, depth: number) => Item | void,
+  depth = 0,
+  parents: Group[] = [],
 ) {
   for (let i = 0; i < group.children.length; i++) {
     const item = group.children[i];
-    const newItem = walker(item, group, i, depth);
+    const newParents = [...parents, group];
+    const newItem = walker(item, newParents, i, depth);
     if (newItem) {
       group.children[i] = newItem;
     }
     if (item.kind === 'group') {
-      walkGroup(item, walker, depth + 1);
+      walkGroup(item, walker, depth + 1, newParents);
     }
   }
 }
 
 export function applyRoot(root: RootGroup) {
-  const { groupMap, itemMap, items: oldItems, apps, imageCaches, lastSystemItemId } = getDB();
+  const launchpadDB = getDB();
+  const { db, groupMap, itemMap, items: oldItems, apps, imageCaches, lastSystemItemId } = launchpadDB;
+
+  patchPlaceholder(root);
+  verifyRoot(launchpadDB, root);
 
   // 创建新项目时的下一个id
   let nextId = Math.max(...oldItems.map(item => item.rowid)) + 1;
@@ -178,10 +188,11 @@ export function applyRoot(root: RootGroup) {
   const updateGroups: RawGroup[] = [];
   const updateItems: RawItem[] = [];
 
-  walkGroup(root, (item, parent, index) => {
+  walkGroup(root, (item, parents, index) => {
     if (item.id >= 1 && item.id <= lastSystemItemId) {
       return;
     }
+    const parent = parents[parents.length - 1];
     const dbItem = itemMap[item.id];
     // parent.id=1时序号需要从1开始，因为有个系统内置的HOLDINGPAGE
     const ordering = parent.id === 1 ? index + 1 : index;
@@ -223,7 +234,6 @@ export function applyRoot(root: RootGroup) {
 
   /// 删掉所有数据重建数据库
   let sql: StatementSync;
-  const db = new DatabaseSync(getDBPath());
   db.prepare(`delete
               from items
               where rowid > ${lastSystemItemId}`).run();
@@ -295,4 +305,52 @@ export function findItemByName(root: RootGroup, kind: Item['kind'], expectedName
     }
   });
   return items;
+}
+
+/**
+ * 文件夹需要两层Group，其中第一层带有name，称为Placeholder，第二层实际容纳APP
+ */
+export function patchPlaceholder(root: RootGroup) {
+  walkGroup(root, (item, parents) => {
+    if (item.kind === 'group' && parents.length === 2) {
+      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isPlaceholder) {
+        item.isPlaceholder = true;
+        item.children = [
+          {
+            kind: 'group',
+            id: 0,
+            name: null,
+            children: item.children
+          }
+        ];
+        return item;
+      }
+    }
+  });
+}
+
+export function verifyRoot(db: LaunchpadDB, root: RootGroup) {
+  const newApps = collectApps(root);
+  if (db.apps.length !== newApps.length) {
+    const newAppSet = new Set(newApps.map(app => app.name));
+    const originAppSet = new Set(db.apps.map(app => app.title));
+    const unexpected = newAppSet.difference(originAppSet);
+    const missing = originAppSet.difference(newAppSet);
+    if (unexpected.size > 0) {
+      console.error(`+++${[...unexpected]}`);
+    }
+    if (missing.size > 0) {
+      console.error(`---${[...missing]}`);
+    }
+    throw Error('app count mismatch');
+  }
+  assert(db.apps.length === newApps.length,
+    `app count should equal to current apps: ${newApps.length} !== ${db.apps.length}`);
+  walkGroup(root, (item, parents) => {
+    if (item.kind === 'group' && parents.length === 2) {
+      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isPlaceholder) {
+        throw Error(`folder ${item.id} has no placeholder`);
+      }
+    }
+  });
 }

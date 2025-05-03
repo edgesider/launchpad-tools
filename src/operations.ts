@@ -2,6 +2,16 @@ import pinyin from 'pinyin';
 import { App, Group, Item, RootGroup, walkGroup } from './db';
 import { deepClone, groupBy } from './utils';
 
+export function collectApps(group: Group) {
+  const apps: App[] = [];
+  walkGroup(group, item => {
+    if (item.kind === 'app') {
+      apps.push(item);
+    }
+  });
+  return apps;
+}
+
 export class Operations {
   private constructor(public root: RootGroup) {
   }
@@ -11,13 +21,7 @@ export class Operations {
   }
 
   private getApps(): App[] {
-    const apps: App[] = [];
-    walkGroup(this.root, (item) => {
-      if (item.kind === 'app') {
-        apps.push(item);
-      }
-    });
-    return apps;
+    return collectApps(this.root);
   }
 
   /**
@@ -60,33 +64,18 @@ export class Operations {
     return Operations.from(root, false);
   }
 
-  groupedBy(grouper: (app: App) => string, groupType: 'page' | 'folder' = 'page'): Operations {
+  groupedBy(grouper: (app: App) => string, groupType: 'page' | 'folder' = 'folder'): Operations {
     const apps = this.getApps();
-    const colorGrouped = groupBy(apps.map(app => [app, grouper(app)] as const), '1');
+    const grouped = groupBy(apps.map(app => [app, grouper(app)] as const), '1');
     const groups: Group[] = [];
-    for (const [group, apps_] of Object.entries(colorGrouped)) {
+    for (const [group, apps_] of Object.entries(grouped)) {
       const apps = apps_.map(a => a[0]);
-      if (groupType === 'folder') {
-        groups.push({
-          id: 0,
-          kind: 'group',
-          name: group,
-          isPlaceholder: true,
-          children: [{
-            kind: 'group',
-            id: 0,
-            name: null,
-            children: apps
-          }]
-        });
-      } else if (groupType === 'page') {
-        groups.push({
-          id: 0,
-          kind: 'group',
-          name: group,
-          children: apps,
-        });
-      }
+      groups.push({
+        id: 0,
+        kind: 'group',
+        name: group,
+        children: apps,
+      });
     }
     return Operations.from({
       id: 1,

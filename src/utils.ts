@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import sharp from 'sharp';
 import { getDBPath, LaunchpadDB } from './db';
 
-export function assert(cond: Boolean, log: string) {
+export function assert(cond: Boolean, log?: string) {
   if (!cond) {
-    throw Error(log);
+    throw Error(log ?? 'assert failed');
   }
 }
 
