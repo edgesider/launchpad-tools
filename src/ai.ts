@@ -22,7 +22,7 @@ type TinyRoot = TinyPage[];
 
 - 输出结果要**符合上述类型定义**，**Page只能在第2层、Folder只能在第3层、App只能在Page内或者Folder内**。
 - 每个App的名称要和和输入完全一致，**大小写、空格等不会改变**。
-- 所有App都只能来自当前的TinyRoot，并且其中所有的App都要出现，且只出现一次。
+- 所有App都只能来自当前的TinyRoot，其中**所有的App都要出现，且只能出现一次**。
 - 输出需要是合法的JSON，输出JSON不需要格式化，压缩到一行以节省字符。
 - 输出JSON结果即可，不需要额外的解释说明。
 - 如果用户的输入未能指定明确的布局需求，请返回面向用户的提示文本，指导他使用方式
@@ -69,7 +69,7 @@ export async function getLayoutResult(root: TinyRoot, userPrompt: string): Promi
     // model: 'Pro/deepseek-ai/DeepSeek-V3',
     // model: 'qwen-max-latest',
     model: 'deepseek-v3',
-    temperature: 0.5,
+    temperature: 0.4,
     stream: true
   });
 

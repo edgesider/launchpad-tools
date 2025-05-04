@@ -1,4 +1,4 @@
-import { App, Group, Item, RootGroup, walkGroup } from './db';
+import { App, Page, RootFolder, Folder } from './db';
 import { assert, associateWith } from './utils';
 
 // 表示单个App，值为App名称
@@ -15,59 +15,56 @@ function isTinyFolder(item: TinyItem): item is TinyFolder {
   return Array.isArray(item);
 }
 
-function toTinyFolder(group: Group): TinyFolder {
-  assert(Boolean(group.name));
-  const name = group.name!;
+function toTinyFolder(folder: Folder): TinyFolder {
+  const name = folder.name;
   let apps: TinyApp[];
-  if (group.children.length === 0) {
-    apps = [];
-  } else if (group.children[0].kind === 'group') {
-    apps = group.children[0].children.map(item => item.name!);
-  } else {
-    apps = group.children.map(item => item.name!);
-  }
+  apps = folder.children
+    .map(page => (page.children as App[])
+      .map(app => app.name))
+    .flat();
   return [name, apps];
 }
 
-function toTinyPage(group: Group): TinyPage {
-  assert(!group.isFolder);
+function toTinyPage(group: Page): TinyPage {
   return group.children.map((item): (TinyFolder | TinyApp) => {
     if (item.kind === 'app') {
       return item.name;
-    } else if (item.kind === 'group') {
+    } else {
       return toTinyFolder(item);
     }
-    throw Error('unknown kind');
   });
 }
 
-export function toTinyRoot(root: RootGroup): TinyRoot {
-  return root.children.map(item => toTinyPage(item as Group));
+export function toTinyRoot(root: RootFolder): TinyRoot {
+  return root.children.map(item => toTinyPage(item as Page));
 }
 
-export function tinyToRoot(apps: App[], tiny: TinyRoot): RootGroup {
+export function tinyToRoot(apps: App[], tiny: TinyRoot): RootFolder {
   const appByName = associateWith(apps, 'name');
   return {
     id: 1,
-    kind: 'group',
-    name: null,
-    children: tiny.map((page): Group => {
+    kind: 'folder',
+    name: 'root',
+    children: tiny.map((page): Page => {
       return {
-        kind: 'group',
+        kind: 'page',
         id: 0,
-        name: null,
-        children: page.map((item): Item => {
+        children: page.map((item): App | Folder => {
           if (isTinyFolder(item)) {
             return {
-              kind: 'group',
+              kind: 'folder',
               id: 0,
               name: item[0],
-              children: item[1].map(appName => {
-                const app = appByName[appName];
-                assert(Boolean(app), `app ${appName} not found`);
-                return app;
-              })
-            } satisfies Group;
+              children: [{
+                kind: 'page',
+                id: 0,
+                children: item[1].map(appName => {
+                  const app = appByName[appName];
+                  assert(Boolean(app), `app ${appName} not found`);
+                  return app;
+                })
+              }]
+            } satisfies Folder;
           } else {
             const app = appByName[item];
             assert(Boolean(app), `app ${item} not found`);

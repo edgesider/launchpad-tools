@@ -6,8 +6,9 @@ import { collectApps } from './operations';
 import { assert, associateWith, classifyHSL, ColorClass, getDominantColor, rgbToHSL } from './utils';
 
 export enum ItemType {
+  RootFolder = 1,
   Folder = 2,
-  Group = 3,
+  Page = 3,
   App = 4,
 }
 
@@ -52,19 +53,34 @@ export interface App {
   name: string;
 }
 
-export interface Group {
-  kind: 'group';
+export interface Page {
+  kind: 'page';
   id: number;
-  name: string | null;
-  children: Item[];
-  isFolder?: boolean;
+  children: (App | Folder)[];
 }
 
-export interface RootGroup extends Group {
+export interface Folder {
+  kind: 'folder';
+  id: number;
+  name: string;
+  children: Page[];
+}
+
+export interface RootFolder extends Folder {
   id: 1;
+  name: 'root';
 }
 
-export type Item = App | Group;
+export type Item = App | Folder | Page;
+export type Group = Folder | Page;
+
+export function itemIsGroup(item: Item): item is Group {
+  return item.kind === 'folder' || item.kind === 'page';
+}
+
+export function itemGetName(item: Item): string | null {
+  return item.kind === 'page' ? null : item.name;
+}
 
 export interface LaunchpadDB {
   db: DatabaseSync;
@@ -111,56 +127,79 @@ export function getDB(): LaunchpadDB {
   };
 }
 
-export function getRoot(db?: LaunchpadDB): RootGroup {
+export function getRoot(db?: LaunchpadDB): RootFolder {
   const { appMap, groupMap, items, itemMap, lastSystemItemId } = db ?? getDB();
 
-  const itemToGroup = (item: RawItem): Group => {
+  const itemToGroup = (item: RawItem): App | Page | Folder => {
     const g = groupMap[item.rowid];
     if (!g) {
       throw Error(`no such group ${item.rowid}`);
     }
-    const children: Item[] = items
+    const children: (App | Page | Folder)[] = items
       .filter(item => item.parent_id === g.item_id)
       .sort((i1, i2) => i1.ordering - i2.ordering)
-      .map((item): Item | null => {
+      .map((item): App | Page | Folder | null => {
         if (item.rowid <= lastSystemItemId) {
           return null;
         }
-        if (item.type === ItemType.Group || item.type === ItemType.Folder) {
-          // group
-          return itemToGroup(item);
-        } else if (item.type === ItemType.App) {
-          const app = appMap[item.rowid];
-          return {
-            kind: 'app',
-            id: item.rowid,
-            bundle_id: app.bundleid,
-            name: app.title,
-          } satisfies App;
+        switch (item.type) {
+          case ItemType.Page:
+          case ItemType.Folder:
+            return itemToGroup(item);
+          case ItemType.App: {
+            const app = appMap[item.rowid];
+            return {
+              kind: 'app',
+              id: item.rowid,
+              bundle_id: app.bundleid,
+              name: app.title,
+            } satisfies App;
+          }
+          default:
+            return null;
         }
-        return null;
       })
-      .filter((r): r is (App | Group) => Boolean(r));
-    return {
-      kind: 'group',
-      id: item.rowid,
-      name: g.title,
-      isFolder: item.type === ItemType.Folder,
-      children,
-    };
+      .filter((r): r is (App | Page | Folder) => Boolean(r));
+    switch (item.type) {
+      case ItemType.RootFolder:
+      case ItemType.Folder:
+        return {
+          kind: 'folder',
+          id: item.rowid,
+          name: g.title!,
+          children: children as Page[],
+        };
+      case ItemType.Page:
+        return {
+          kind: 'page',
+          id: item.rowid,
+          children: children as (App | Folder)[],
+        };
+      case ItemType.App: {
+        const app = appMap[item.rowid];
+        return {
+          kind: 'app',
+          id: item.rowid,
+          bundle_id: app.bundleid,
+          name: app.title,
+        } satisfies App;
+      }
+      default:
+        throw Error(`unknown item type ${item.type}`);
+    }
   };
 
-  return itemToGroup(itemMap[1]) as RootGroup;
+  return itemToGroup(itemMap[1]) as RootFolder;
 }
 
 /**
  * 使用{@link walker}遍历{@link group}
  */
 export function walkGroup(
-  group: Group,
-  walker: (item: Item, parents: Group[], index: number, depth: number) => Item | void,
+  group: Page | Folder,
+  walker: (item: Item, parents: (Page | Folder)[], index: number, depth: number) => Item | void,
   depth = 0,
-  parents: Group[] = [],
+  parents: (Page | Folder)[] = [],
 ) {
   for (let i = 0; i < group.children.length; i++) {
     const item = group.children[i];
@@ -169,17 +208,17 @@ export function walkGroup(
     if (newItem) {
       group.children[i] = newItem;
     }
-    if (item.kind === 'group') {
+    if (item.kind === 'page' || item.kind === 'folder') {
       walkGroup(item, walker, depth + 1, newParents);
     }
   }
 }
 
-export function applyRoot(root: RootGroup) {
+export function applyRoot(root: RootFolder) {
   const launchpadDB = getDB();
   const { db, groupMap, itemMap, items: oldItems, apps, imageCaches, lastSystemItemId } = launchpadDB;
 
-  patchPlaceholder(root);
+  // patchPlaceholder(root);
   verifyRoot(launchpadDB, root);
 
   // 创建新项目时的下一个id
@@ -202,10 +241,10 @@ export function applyRoot(root: RootGroup) {
       dbItem.ordering = ordering;
       updateItems.push(dbItem);
 
-      if (item.kind === 'group') {
+      if (itemIsGroup(item)) {
         // 同时更新group
         const dbGroup = groupMap[item.id];
-        dbGroup.title = item.name;
+        dbGroup.title = item.kind === 'folder' ? item.name : null;
         updateGroups.push(dbGroup);
       }
     } else {
@@ -215,17 +254,19 @@ export function applyRoot(root: RootGroup) {
         rowid: item.id,
         uuid: randomUUID().toUpperCase(),
         flags: 0,
-        type: item.kind === 'group'
-          ? (item.isFolder ? ItemType.Folder : ItemType.Group)
-          : ItemType.App,
+        type: {
+          app: ItemType.App,
+          folder: ItemType.Folder,
+          page: ItemType.Page,
+        }[item.kind],
         parent_id: parent.id,
         ordering
       });
-      if (item.kind === 'group') {
+      if (itemIsGroup(item)) {
         // 同时创建group
         updateGroups.push({
           item_id: item.id,
-          title: item.name,
+          title: item.kind === 'folder' ? item.name : null,
           category_id: null,
         });
       }
@@ -294,13 +335,13 @@ export async function buildDominantColorClassMap(db: LaunchpadDB): Promise<Recor
 }
 
 
-export function findItemByName(root: RootGroup, kind: 'app', expectedName: string | RegExp): App[];
-export function findItemByName(root: RootGroup, kind: 'group', expectedName: string | RegExp): Group[];
-export function findItemByName(root: RootGroup, kind: Item['kind'], expectedName: string | RegExp): Item[] {
+export function findItemByName(root: RootFolder, kind: 'app', expectedName: string | RegExp): App[];
+export function findItemByName(root: RootFolder, kind: 'folder', expectedName: string | RegExp): Page[];
+export function findItemByName(root: RootFolder, kind: 'app' | 'folder', expectedName: string | RegExp): Item[] {
   const items: Item[] = [];
   expectedName = expectedName instanceof RegExp ? expectedName : new RegExp(expectedName);
   walkGroup(root, item => {
-    if (item.kind === kind && item.name && expectedName.test(item.name)) {
+    if ((item.kind === 'app' || item.kind === 'folder') && item.name && expectedName.test(item.name)) {
       items.push(item);
     }
   });
@@ -310,47 +351,48 @@ export function findItemByName(root: RootGroup, kind: Item['kind'], expectedName
 /**
  * 文件夹需要两层Group，其中第一层带有name，称为Placeholder，第二层实际容纳APP
  */
-export function patchPlaceholder(root: RootGroup) {
-  walkGroup(root, (item, parents) => {
-    if (item.kind === 'group' && parents.length === 2) {
-      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isFolder) {
-        item.isFolder = true;
-        item.children = [
-          {
-            kind: 'group',
-            id: 0,
-            name: null,
-            children: item.children
-          }
-        ];
-        return item;
-      }
-    }
-  });
+export function patchPlaceholder(root: RootFolder) {
+  // walkGroup(root, (item, parents) => {
+  //   if (item.kind === 'group' && parents.length === 2) {
+  //     if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isFolder) {
+  //       item.isFolder = true;
+  //       item.children = [
+  //         {
+  //           kind: 'group',
+  //           id: 0,
+  //           name: null,
+  //           children: item.children
+  //         }
+  //       ];
+  //       return item;
+  //     }
+  //   }
+  // });
 }
 
-export function verifyRoot(db: LaunchpadDB, root: RootGroup) {
+export function verifyRoot(db: LaunchpadDB, root: RootFolder) {
   const newApps = collectApps(root);
+  const newAppSet = new Set(newApps.map(app => app.name));
+  const originAppSet = new Set(db.apps.map(app => app.title));
+
+  if (newApps.length !== newAppSet.size) {
+    const newAppNames = newApps.map(app => app.name);
+    for (const app of newAppSet) {
+      newAppNames.splice(newAppNames.indexOf(app), 1);
+    }
+    throw Error(`有些App出现多次: ${[...newAppNames].join(',')}`);
+  }
+
   if (db.apps.length !== newApps.length) {
-    const newAppSet = new Set(newApps.map(app => app.name));
-    const originAppSet = new Set(db.apps.map(app => app.title));
     const unexpected = newAppSet.difference(originAppSet);
     const missing = originAppSet.difference(newAppSet);
+    let info = 'App数量不匹配: ';
     if (unexpected.size > 0) {
-      console.error(`+++${[...unexpected]}`);
+      info += `多余 ${[...unexpected].join(',')}`;
     }
     if (missing.size > 0) {
-      console.error(`---${[...missing]}`);
+      info += `缺少 ${[...missing].join(',')}`;
     }
-    throw Error('app count mismatch');
+    throw Error(info);
   }
-  assert(db.apps.length === newApps.length,
-    `app count should equal to current apps: ${newApps.length} !== ${db.apps.length}`);
-  walkGroup(root, (item, parents) => {
-    if (item.kind === 'group' && parents.length === 2) {
-      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isFolder) {
-        throw Error(`folder ${item.id} has no placeholder`);
-      }
-    }
-  });
 }
