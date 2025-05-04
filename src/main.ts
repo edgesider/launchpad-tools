@@ -1,17 +1,17 @@
 import { applyRoot, buildDominantColorClassMap, getDB, getRoot } from './db';
 import { Operations } from './operations';
-import { getColorClassName, restartLaunchpad, sleep } from './utils';
+import { restartLaunchpad } from './utils';
 
 async function main() {
   const db = getDB();
   const root = getRoot(db);
   const colorClassMap = await buildDominantColorClassMap(db);
 
-  const newRoot = Operations.from(root)
-    .groupedBy(app => getColorClassName(colorClassMap[app.id]))
-    .sorted()
-    .root;
-  applyRoot(newRoot);
+  // console.log(JSON.stringify(toTinyRoot(root)));
+  // tinyToRoot(collectApps(root), JSON.parse(fs.readFileSync('./llm.json').toString()));
+
+  applyRoot((await Operations.from(root).layoutWithAI(db)).root);
+
   restartLaunchpad();
 }
 

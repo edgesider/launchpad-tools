@@ -2,3 +2,8 @@
 dist
 node_modules
 color.html
+
+llm.json
+llm_input.json
+root.json
+tiny.json

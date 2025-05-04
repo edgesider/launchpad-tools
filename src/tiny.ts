@@ -30,7 +30,7 @@ function toTinyFolder(group: Group): TinyFolder {
 }
 
 function toTinyPage(group: Group): TinyPage {
-  assert(!group.isPlaceholder);
+  assert(!group.isFolder);
   return group.children.map((item): (TinyFolder | TinyApp) => {
     if (item.kind === 'app') {
       return item.name;

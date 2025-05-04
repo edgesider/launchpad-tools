@@ -6,7 +6,7 @@ import { collectApps } from './operations';
 import { assert, associateWith, classifyHSL, ColorClass, getDominantColor, rgbToHSL } from './utils';
 
 export enum ItemType {
-  Placeholder = 2,
+  Folder = 2,
   Group = 3,
   App = 4,
 }
@@ -44,7 +44,7 @@ export interface RawImageCache {
   image_data_mini: NodeJS.ArrayBufferView;
 }
 
-// TODO 结构具体到App/Folder/Page/Root
+// TODO 结构具体到App/Page/Folder/Page/Root
 export interface App {
   kind: 'app';
   id: number;
@@ -57,7 +57,7 @@ export interface Group {
   id: number;
   name: string | null;
   children: Item[];
-  isPlaceholder?: boolean;
+  isFolder?: boolean;
 }
 
 export interface RootGroup extends Group {
@@ -126,7 +126,7 @@ export function getRoot(db?: LaunchpadDB): RootGroup {
         if (item.rowid <= lastSystemItemId) {
           return null;
         }
-        if (item.type === ItemType.Group || item.type === ItemType.Placeholder) {
+        if (item.type === ItemType.Group || item.type === ItemType.Folder) {
           // group
           return itemToGroup(item);
         } else if (item.type === ItemType.App) {
@@ -145,7 +145,7 @@ export function getRoot(db?: LaunchpadDB): RootGroup {
       kind: 'group',
       id: item.rowid,
       name: g.title,
-      isPlaceholder: item.type === ItemType.Placeholder,
+      isFolder: item.type === ItemType.Folder,
       children,
     };
   };
@@ -216,7 +216,7 @@ export function applyRoot(root: RootGroup) {
         uuid: randomUUID().toUpperCase(),
         flags: 0,
         type: item.kind === 'group'
-          ? (item.isPlaceholder ? ItemType.Placeholder : ItemType.Group)
+          ? (item.isFolder ? ItemType.Folder : ItemType.Group)
           : ItemType.App,
         parent_id: parent.id,
         ordering
@@ -313,8 +313,8 @@ export function findItemByName(root: RootGroup, kind: Item['kind'], expectedName
 export function patchPlaceholder(root: RootGroup) {
   walkGroup(root, (item, parents) => {
     if (item.kind === 'group' && parents.length === 2) {
-      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isPlaceholder) {
-        item.isPlaceholder = true;
+      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isFolder) {
+        item.isFolder = true;
         item.children = [
           {
             kind: 'group',
@@ -348,7 +348,7 @@ export function verifyRoot(db: LaunchpadDB, root: RootGroup) {
     `app count should equal to current apps: ${newApps.length} !== ${db.apps.length}`);
   walkGroup(root, (item, parents) => {
     if (item.kind === 'group' && parents.length === 2) {
-      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isPlaceholder) {
+      if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isFolder) {
         throw Error(`folder ${item.id} has no placeholder`);
       }
     }

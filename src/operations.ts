@@ -1,6 +1,8 @@
 import pinyin from 'pinyin';
-import { App, Group, Item, RootGroup, walkGroup } from './db';
-import { deepClone, groupBy } from './utils';
+import { getLayoutResult } from './ai';
+import { App, getRoot, Group, Item, LaunchpadDB, RootGroup, walkGroup } from './db';
+import { tinyToRoot, toTinyRoot } from './tiny';
+import { assert, deepClone, groupBy } from './utils';
 
 export function collectApps(group: Group) {
   const apps: App[] = [];
@@ -90,5 +92,23 @@ export class Operations {
         }]
         : groups
     });
+  }
+
+  // TODO 循环检测输出，不断矫正问题，例如App变多或变少
+  async layoutWithAI(db: LaunchpadDB): Promise<Operations> {
+    const root = getRoot(db);
+    const newRoot = await getLayoutResult(
+      toTinyRoot(root),
+      // '按照应用类别，将应用分为开发者工具、系统工具、社交、网络、影音、游戏、其他几个类别，并将每个类别放到第一页的各自的文件夹里面',
+      '按照应用类别，将应用分为开发者工具、系统工具、社交、网络、影音、游戏、其他几个类别，并将每个类别平铺并放到单独的Page中，不要建立文件夹',
+      // '按照应用类别，将应用分为开发者工具、系统工具等类别，并将每个类别放到第一页的各自的文件夹里面',
+      // '按照应用类别将每个类别平铺并放到单独的Page中，不要建立文件夹',
+      // '将应用按照图标主题色分类'
+      // '将Mac自带的应用放到单独一个useless的文件夹中，其他的平铺到第一页'
+      // '平铺所有应用，别漏掉任何应用'
+      // '所有应用放到一个文件夹中'
+    );
+    assert(Boolean(newRoot));
+    return Operations.from(tinyToRoot(collectApps(root), newRoot!));
   }
 }
