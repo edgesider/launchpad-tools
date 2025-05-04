@@ -98,12 +98,4 @@ export class Operations {
         : pages.map(([, page]) => page)
     });
   }
-
-  // TODO 循环检测输出，不断矫正问题，例如App变多或变少
-  async layoutWithAI(db: LaunchpadDB, prompt: string): Promise<Operations> {
-    const root = getRoot(db);
-    const newRoot = await getLayoutResult(toTinyRoot(root), prompt);
-    assert(Boolean(newRoot));
-    return Operations.from(tinyToRoot(collectApps(root), newRoot!));
-  }
 }

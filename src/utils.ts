@@ -225,8 +225,20 @@ export async function resetLaunchpad() {
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
-})
+});
 
-export async function getInput(prompt: string = ''): Promise<string> {
-  return rl.question(prompt);
+const closeSymbol = Symbol('eof');
+
+export async function getInput(prompt: string = ''): Promise<string | null> {
+  if (process.stdin.closed) {
+    return null;
+  }
+  const closePromise = new Promise<typeof closeSymbol>(res => {
+    rl.on('close', () => res(closeSymbol));
+  });
+  const result = await Promise.race([rl.question(prompt), closePromise]);
+  if (result === closeSymbol) {
+    return null;
+  }
+  return result;
 }

@@ -218,8 +218,8 @@ export function applyRoot(root: RootFolder) {
   const launchpadDB = getDB();
   const { db, groupMap, itemMap, items: oldItems, apps, imageCaches, lastSystemItemId } = launchpadDB;
 
-  // patchPlaceholder(root);
-  verifyRoot(launchpadDB, root);
+  const currentRoot = getRoot(launchpadDB);
+  verifyRoot(collectApps(currentRoot), root);
 
   // 创建新项目时的下一个id
   let nextId = Math.max(...oldItems.map(item => item.rowid)) + 1;
@@ -348,44 +348,25 @@ export function findItemByName(root: RootFolder, kind: 'app' | 'folder', expecte
   return items;
 }
 
-/**
- * 文件夹需要两层Group，其中第一层带有name，称为Placeholder，第二层实际容纳APP
- */
-export function patchPlaceholder(root: RootFolder) {
-  // walkGroup(root, (item, parents) => {
-  //   if (item.kind === 'group' && parents.length === 2) {
-  //     if (item.children.length > 0 && item.children[0].kind === 'app' && !item.isFolder) {
-  //       item.isFolder = true;
-  //       item.children = [
-  //         {
-  //           kind: 'group',
-  //           id: 0,
-  //           name: null,
-  //           children: item.children
-  //         }
-  //       ];
-  //       return item;
-  //     }
-  //   }
-  // });
+export class VerifyError extends Error {
 }
 
-export function verifyRoot(db: LaunchpadDB, root: RootFolder) {
+export function verifyRoot(oldApps: App[], root: RootFolder) {
   const newApps = collectApps(root);
   const newAppSet = new Set(newApps.map(app => app.name));
-  const originAppSet = new Set(db.apps.map(app => app.title));
+  const oldAppSet = new Set(oldApps.map(app => app.name));
 
   if (newApps.length !== newAppSet.size) {
     const newAppNames = newApps.map(app => app.name);
     for (const app of newAppSet) {
       newAppNames.splice(newAppNames.indexOf(app), 1);
     }
-    throw Error(`有些App出现多次: ${[...newAppNames].join(',')}`);
+    throw new VerifyError(`有些App出现多次: ${[...newAppNames].join(',')}`);
   }
 
-  if (db.apps.length !== newApps.length) {
-    const unexpected = newAppSet.difference(originAppSet);
-    const missing = originAppSet.difference(newAppSet);
+  if (oldApps.length !== newApps.length) {
+    const unexpected = newAppSet.difference(oldAppSet);
+    const missing = oldAppSet.difference(newAppSet);
     let info = 'App数量不匹配: ';
     if (unexpected.size > 0) {
       info += `多余 ${[...unexpected].join(',')}`;
@@ -393,6 +374,6 @@ export function verifyRoot(db: LaunchpadDB, root: RootFolder) {
     if (missing.size > 0) {
       info += `缺少 ${[...missing].join(',')}`;
     }
-    throw Error(info);
+    throw new VerifyError(info);
   }
 }
