@@ -1,5 +1,6 @@
 import child_process from 'node:child_process';
 import fs from 'node:fs';
+import * as readline from 'node:readline/promises';
 import sharp from 'sharp';
 import { getDBPath, LaunchpadDB } from './db';
 
@@ -219,4 +220,13 @@ export async function resetLaunchpad() {
   restartLaunchpad();
   await sleep(500);
   restartLaunchpad();
+}
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+})
+
+export async function getInput(prompt: string = ''): Promise<string> {
+  return rl.question(prompt);
 }

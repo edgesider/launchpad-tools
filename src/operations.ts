@@ -95,12 +95,13 @@ export class Operations {
   }
 
   // TODO 循环检测输出，不断矫正问题，例如App变多或变少
-  async layoutWithAI(db: LaunchpadDB): Promise<Operations> {
+  async layoutWithAI(db: LaunchpadDB, prompt: string): Promise<Operations> {
     const root = getRoot(db);
     const newRoot = await getLayoutResult(
       toTinyRoot(root),
+      prompt
       // '按照应用类别，将应用分为开发者工具、系统工具、社交、网络、影音、游戏、其他几个类别，并将每个类别放到第一页的各自的文件夹里面',
-      '按照应用类别，将应用分为开发者工具、系统工具、社交、网络、影音、游戏、其他几个类别，并将每个类别平铺并放到单独的Page中，不要建立文件夹',
+      // '按照应用类别，将应用分为开发者工具、系统工具、社交、网络、影音、游戏、其他几个类别，并将每个类别平铺并放到单独的Page中，不要建立文件夹',
       // '按照应用类别，将应用分为开发者工具、系统工具等类别，并将每个类别放到第一页的各自的文件夹里面',
       // '按照应用类别将每个类别平铺并放到单独的Page中，不要建立文件夹',
       // '将应用按照图标主题色分类'
